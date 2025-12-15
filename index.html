@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title> MURSHAD-HACKER </title>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        /* --- General Body Styling --- */
+        body {
+            font-family: 'Poppins', sans-serif;
+            background-color: #121212; /* Dark background for a modern feel */
+            color: #ffffff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        /* --- Main Bio Container --- */
+        .bio-container {
+            text-align: center;
+            max-width: 600px;
+            width: 100%;
+            padding: 40px;
+            background: #1e1e1e;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        /* --- Title: Muhammad Ali --- */
+        .title {
+            font-size: 3rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(45deg, #ff00cc, #3333ff); /* Vibrant Pink to Blue Gradient */
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            color: transparent;
+        }
+
+        /* --- Subtitle: A Graphics Designer --- */
+        .subtitle {
+            font-size: 1.2rem;
+            font-weight: 400;
+            color: #FFD700; /* Professional Yellow/Gold Color */
+            margin-top: 0;
+            margin-bottom: 2rem;
+            letter-spacing: 1px;
+        }
+
+        /* --- Profile Image --- */
+        .profile-pic {
+            width: 150px;
+            height: 150px;
+            border-radius: 50%; /* Makes the image circular */
+            border: 5px solid #3333ff; /* Blue stroke matching the title gradient */
+            object-fit: cover;
+            margin-bottom: 1rem;
+            box-shadow: 0 0 25px rgba(51, 51, 255, 0.5);
+            transition: transform 0.3s ease;
+        }
+        .profile-pic:hover {
+            transform: scale(1.05);
+        }
+
+        /* --- Quote Line --- */
+        .quote {
+            font-weight: 700;
+            font-size: 1.1rem;
+            margin-top: 1.5rem;
+            margin-bottom: 2.5rem;
+            color: #cccccc;
+        }
+
+        /* --- "Follow Me" Highlight Box Title --- */
+        .section-title {
+            display: inline-block;
+            padding: 0.5rem 1.5rem;
+            background-color: rgba(255, 255, 255, 0.1);
+            border-radius: 50px;
+            font-size: 1rem;
+            font-weight: 700;
+            margin-bottom: 2rem;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        /* --- Social Links Container --- */
+        .social-links {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        /* --- Social Media Buttons - General Style --- */
+        .social-btn {
+            width: 55px;
+            height: 55px;
+            border-radius: 50%; /* Fully rounded buttons */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            text-decoration: none;
+            color: #ffffff;
+            font-size: 1.6rem;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            /* Loading Animation */
+            animation: pulse 2s infinite cubic-bezier(0.66, 0, 0, 1);
+        }
+
+        /* --- Button Hover Effect --- */
+        .social-btn:hover {
+            transform: translateY(-5px) scale(1.1);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.6);
+            animation-play-state: paused; /* Pause animation on hover for a better experience */
+        }
+
+        /* --- Specific Button Colors --- */
+        .tiktok { 
+            background-color: #000000;
+            border: 2px solid #fff; /* White border to make the black button stand out */
+        }
+        .facebook { background-color: #1877F2; }
+        .whatsapp { background-color: #25D366; }
+        .instagram {
+            background: radial-gradient(circle at 30% 107%, #fdf497 0%, #fdf497 5%, #fd5949 45%,#d6249f 60%,#285AEB 90%);
+        }
+
+        /* Staggering the animation for a more dynamic loading feel */
+        .social-btn.facebook { animation-delay: 0.2s; }
+        .social-btn.instagram { animation-delay: 0.4s; }
+        .social-btn.whatsapp { animation-delay: 0.6s; }
+
+        /* --- Pulse Loading Animation Keyframes --- */
+        @keyframes pulse {
+            0%, 100% {
+                transform: scale(1);
+                box-shadow: none;
+            }
+            50% {
+                transform: scale(1.05);
+            }
+        }
+
+        /* --- Responsive adjustments for smaller screens (e.g., mobile phones) --- */
+        @media (max-width: 480px) {
+            .bio-container {
+                padding: 25px;
+            }
+            .title {
+                font-size: 2.5rem;
+            }
+            .subtitle {
+                font-size: 1rem;
+            }
+            .profile-pic {
+                width: 120px;
+                height: 120px;
+            }
+            .social-links {
+                gap: 15px;
+            }
+            .social-btn {
+                width: 50px;
+                height: 50px;
+                font-size: 1.4rem;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="bio-container">
+    
+        <h1 class="title">Ali_RaJput</h1>
+        
+        <p class="subtitle">[×CYBER"<~>"BOY×]</p>
+        
+        <img src="https://i.ibb.co/YTyKTN0f/175526.jpg" alt="Profile Picture of Muhammad Ali" class="profile-pic">
+        
+        <p class="quote">"کوڈ کی لکیروں میں چھپی کہانی ہوں میں،❌
+دنیا کہے ہیکر — پر عقل کی نشانی ہوں میں۔💻🔥
+"</p>
+        
+        <h2 class="section-title">Follow Me On Social Media</h2>
+        
+        <div class="social-links">
+          <a href="https://chat.whatsapp.com/KldxjbtsgQ31s52Cdx5kkI?mode=ac_t" target="_blank" class="social-btn whatsapp" aria-label="WhatsApp">
+                <i class="fab fa-whatsapp"></i>
+            </a>
+            
+           <a href="https://whatsapp.com/channel/0029VbB9eEoGehETimrbtt0B" target="_blank" class="social-btn whatsapp" aria-label="WhatsApp">
+                <i class="fab fa-whatsapp"></i>
+            </a>
+            
+          <a href="https://wa.me/+923096366879?text=Hi-Murshad-Hacker-Are-You-Great" target="_blank" class="social-btn whatsapp" aria-label="WhatsApp">
+                <i class="fab fa-whatsapp"></i>
+            </a>
+            
+           
+            </a>
+        </div>
+        
+    </div>
+
+</body>
+</html>
