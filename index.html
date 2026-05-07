@@ -3,100 +3,107 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Premium Direct pro Link Generator</title>
+    <title>ULTIMATE DIRECT DOWNLOADER</title>
+    <!-- Firebase Legacy Scripts for better compatibility -->
     <script src="https://gstatic.com"></script>
     <script src="https://gstatic.com"></script>
-    <script src="https://unpkg.com" type="module"></script>
     <style>
-        :root { --primary: #6366f1; --bg: #0f172a; --card: #1e293b; }
-        body { font-family: 'Inter', sans-serif; background: var(--bg); color: white; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; overflow: hidden; }
-        .glass-card { background: var(--card); border: 1px solid rgba(255,255,255,0.1); padding: 40px; border-radius: 24px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); text-align: center; width: 400px; position: relative; z-index: 10; animation: slideUp 0.8s ease-out; }
-        @keyframes slideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
-        .upload-area { border: 2px dashed rgba(255,255,255,0.2); border-radius: 16px; padding: 30px; cursor: pointer; transition: 0.3s; margin-bottom: 20px; }
-        .upload-area:hover { border-color: var(--primary); background: rgba(99, 102, 241, 0.05); }
-        .progress-container { height: 8px; background: #334155; border-radius: 10px; margin: 20px 0; display: none; overflow: hidden; }
-        #progressBar { height: 100%; width: 0%; background: var(--primary); transition: 0.3s; }
-        .link-box { background: #0f172a; padding: 15px; border-radius: 12px; display: none; animation: fadeIn 0.5s; margin-top: 10px; border: 1px solid var(--primary); }
-        .link-box a { color: #818cf8; text-decoration: none; word-break: break-all; font-size: 14px; font-weight: 600; }
-        .btn { background: var(--primary); color: white; border: none; padding: 12px 24px; border-radius: 10px; font-weight: 600; cursor: pointer; width: 100%; transition: 0.3s; }
-        .btn:hover { filter: brightness(1.2); transform: scale(1.02); }
+        :root { --primary: #00f2fe; --secondary: #4facfe; --dark: #0a0b10; }
+        body { background: var(--dark); color: white; font-family: 'Segoe UI', sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 20px; padding: 40px; width: 450px; text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
+        h1 { background: linear-gradient(to right, var(--primary), var(--secondary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 28px; margin-bottom: 10px; }
+        .drop-zone { border: 2px dashed #30363d; padding: 40px; border-radius: 15px; cursor: pointer; transition: 0.3s; margin: 20px 0; }
+        .drop-zone:hover { border-color: var(--primary); background: rgba(0, 242, 254, 0.05); }
+        .progress-bar { width: 100%; height: 10px; background: #21262d; border-radius: 5px; display: none; overflow: hidden; margin: 15px 0; }
+        #progressFill { width: 0%; height: 100%; background: var(--primary); box-shadow: 0 0 10px var(--primary); transition: 0.2s; }
+        .result-box { display: none; background: #0d1117; padding: 15px; border-radius: 10px; border: 1px solid var(--primary); margin-top: 20px; }
+        .link-text { color: var(--primary); word-break: break-all; font-size: 13px; display: block; margin-bottom: 10px; text-decoration: none; }
+        .btn-copy { background: linear-gradient(45deg, var(--secondary), var(--primary)); color: black; border: none; padding: 12px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%; }
+        .status { font-size: 14px; color: #8b949e; }
     </style>
 </head>
 <body>
 
-<div class="glass-card">
-    <dotlottie-player src="https://lottie.host" background="transparent" speed="1" style="width: 150px; height: 150px; margin: 0 auto;" loop autoplay></dotlottie-player>
-    <h1>Direct Link Cloud</h1>
-    <p style="color: #94a3b8;">Upload APK, ZIP, Video, or Audio</p>
-    
-    <div class="upload-area" onclick="document.getElementById('fileInput').click()">
-        <p>Drop file here or <span style="color: var(--primary);">Browse</span></p>
-        <input type="file" id="fileInput" hidden onchange="uploadFile()">
+<div class="card">
+    <h1>SKY DOWNLOADER</h1>
+    <p class="status">Upload APK, ZIP, MP4, MP3, etc.</p>
+
+    <div class="drop-zone" onclick="document.getElementById('fileInput').click()">
+        <p id="fileNameDisplay">Click to Select File</p>
+        <input type="file" id="fileInput" hidden onchange="startUpload()">
     </div>
 
-    <div class="progress-container" id="progressContainer">
-        <div id="progressBar"></div>
+    <div class="progress-bar" id="progressBar">
+        <div id="progressFill"></div>
     </div>
 
-    <div class="link-box" id="linkBox">
-        <p style="font-size: 12px; margin-top: 0;">✅ Direct Download Link Ready:</p>
-        <a id="downloadLink" href="#" target="_blank">Generating...</a>
-        <button class="btn" style="margin-top: 15px;" onclick="copyLink()">Copy Link</button>
+    <div class="result-box" id="resultBox">
+        <span style="font-size: 12px; color: #aaa;">DIRECT DOWNLOAD LINK:</span>
+        <a href="#" id="finalLink" class="link-text" target="_blank"></a>
+        <button class="btn-copy" onclick="copyLink()">COPY DIRECT LINK</button>
     </div>
 </div>
 
 <script>
-    // 1. Paste your Firebase Config here
+    // ======= PASTE YOUR FIREBASE CONFIG BELOW =======
     const firebaseConfig = {
-        apiKey: "YOUR_API_KEY",
-        authDomain: "YOUR_://firebaseapp.com",
-        projectId: "YOUR_PROJECT_ID",
-        storageBucket: "YOUR_://appspot.com",
-        appId: "YOUR_APP_ID"
+        apiKey: "PASTE_HERE",
+        authDomain: "PASTE_HERE",
+        projectId: "PASTE_HERE",
+        storageBucket: "PASTE_HERE",
+        messagingSenderId: "PASTE_HERE",
+        appId: "PASTE_HERE"
     };
+    // ================================================
 
     firebase.initializeApp(firebaseConfig);
     const storage = firebase.storage();
 
-    async function uploadFile() {
-        const file = document.getElementById('fileInput').files[0];
+    function startUpload() {
+        const fileInput = document.getElementById('fileInput');
+        const file = fileInput.files[0];
         if (!file) return;
 
-        const progressContainer = document.getElementById('progressContainer');
+        document.getElementById('fileNameDisplay').innerText = file.name;
+        const progressFill = document.getElementById('progressFill');
         const progressBar = document.getElementById('progressBar');
-        const linkBox = document.getElementById('linkBox');
-        const downloadLink = document.getElementById('downloadLink');
+        const resultBox = document.getElementById('resultBox');
+        
+        progressBar.style.display = 'block';
+        resultBox.style.display = 'none';
 
-        progressContainer.style.display = 'block';
-        linkBox.style.display = 'none';
-
-        // Create storage reference
-        const storageRef = storage.ref('uploads/' + Date.now() + "_" + file.name);
+        // Create a storage ref
+        const storageRef = storage.ref('files/' + Date.now() + "_" + file.name);
         const uploadTask = storageRef.put(file);
 
         uploadTask.on('state_changed', 
             (snapshot) => {
-                const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-                progressBar.style.width = progress + '%';
+                const percent = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                progressFill.style.width = percent + '%';
             }, 
-            (error) => alert("Upload failed: " + error.message), 
-            async () => {
-                const url = await uploadTask.snapshot.ref.getDownloadURL();
-                // Modify URL for direct download
-                const directUrl = url + "&download=1"; 
-                downloadLink.href = directUrl;
-                downloadLink.innerText = directUrl;
-                linkBox.style.display = 'block';
-                progressContainer.style.display = 'none';
+            (error) => { alert("Error: " + error.message); }, 
+            () => {
+                uploadTask.snapshot.ref.getDownloadURL().then((downloadURL) => {
+                    // This creates the direct download trigger
+                    const directLink = downloadURL; 
+                    const linkElement = document.getElementById('finalLink');
+                    
+                    linkElement.href = directLink;
+                    linkElement.innerText = directLink;
+                    
+                    resultBox.style.display = 'block';
+                    progressBar.style.display = 'none';
+                });
             }
         );
     }
 
     function copyLink() {
-        const link = document.getElementById('downloadLink').href;
-        navigator.clipboard.writeText(link);
-        alert("Link copied to clipboard!");
+        const copyText = document.getElementById('finalLink').innerText;
+        navigator.clipboard.writeText(copyText);
+        alert("Link Copied! You can now share this for automatic download.");
     }
 </script>
+
 </body>
 </html>
