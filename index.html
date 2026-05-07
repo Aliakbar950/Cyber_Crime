@@ -37,7 +37,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
   <!-- QRCode.js -->
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
-  <!-- TUS client for resumable uploads with progress -->
+  <!-- TUS client for resumable uploads with progress (used as primary) -->
   <script src="https://cdn.jsdelivr.net/npm/tus-js-client@4.1.0/dist/tus.min.js"></script>
   <!-- Supabase JS SDK -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -151,6 +151,11 @@
 
   <!-- Floating Particles Canvas -->
   <canvas id="particles-canvas"></canvas>
+
+  <!-- Credential warning (hidden if correct) -->
+  <div id="credential-warning" class="fixed top-4 left-1/2 transform -translate-x-1/2 bg-red-800 text-white px-6 py-3 rounded-xl shadow-2xl z-50 hidden">
+    ⚠️ Please replace the placeholder Supabase URL &amp; key in the code!
+  </div>
 
   <!-- Main container -->
   <div class="relative z-20 container mx-auto px-4 py-8 max-w-6xl">
@@ -284,13 +289,27 @@
     const SUPABASE_URL = 'https://your-project-id.supabase.co';
     const SUPABASE_ANON_KEY = 'your-anon-key';
     
-    // Initialize Supabase client
+    // Quick check for placeholder values
+    function isPlaceholder(url, key) {
+      return url.includes('your-project-id') || key === 'your-anon-key' || key.length < 20;
+    }
+
+    // Show warning if still placeholder
+    if (isPlaceholder(SUPABASE_URL, SUPABASE_ANON_KEY)) {
+      const warnDiv = document.getElementById('credential-warning');
+      if (warnDiv) {
+        warnDiv.classList.remove('hidden');
+        warnDiv.textContent = '⚠️ Please replace the placeholder Supabase URL & key inside the <script> tag.';
+      }
+    }
+
+    // Initialize Supabase client (even if placeholder, it fails gracefully)
     let supabase;
     try {
       supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     } catch (e) {
       console.error('Supabase init error', e);
-      alert('Please configure your Supabase credentials in the code.');
+      alert('Supabase initialization failed. Check credentials.');
     }
 
     // Storage bucket name (must exist and be public)
@@ -332,6 +351,7 @@
     let uploadStartTime = null;
     let uploadedBytes = 0;
     let currentFileSize = 0;
+    let currentXhr = null;       // XMLHttpRequest fallback instance
 
     // ==================== PARTICLES BACKGROUND ====================
     function initParticles() {
@@ -439,18 +459,18 @@
     }
 
     // ==================== FILE UPLOAD USING TUS (RESUMABLE) ====================
-    async function uploadFile(file, options = {}) {
+    async function uploadFileWithTUS(file, options = {}) {
       return new Promise((resolve, reject) => {
         const fileId = crypto.randomUUID();
         const safeName = fileId + '-' + file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-        const storagePath = safeName; // file stored with unique prefix
+        const storagePath = safeName;
 
-        // Build TUS upload
         const upload = new tus.Upload(file, {
           endpoint: `${SUPABASE_URL}/storage/v1/upload/resumable`,
           retryDelays: [0, 3000, 5000, 10000, 20000],
           headers: {
             authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+            apikey: SUPABASE_ANON_KEY,           // REQUIRED by Supabase TUS
             'x-upsert': 'true',
           },
           metadata: {
@@ -460,9 +480,9 @@
             cacheControl: 'public, max-age=31536000, immutable',
           },
           uploadSize: file.size,
-          chunkSize: 5 * 1024 * 1024, // 5MB chunks
+          chunkSize: 5 * 1024 * 1024,
           onError: function(error) {
-            console.error('Upload failed:', error);
+            console.error('TUS upload failed:', error);
             reject(error);
           },
           onProgress: function(bytesUploaded, bytesTotal) {
@@ -470,7 +490,7 @@
             uploadedBytes = bytesUploaded;
             currentFileSize = bytesTotal;
             const elapsed = (Date.now() - uploadStartTime) / 1000;
-            const speed = bytesUploaded / elapsed; // bytes per second
+            const speed = bytesUploaded / elapsed;
             const remaining = bytesTotal - bytesUploaded;
             const eta = speed > 0 ? remaining / speed : 0;
 
@@ -482,28 +502,92 @@
             if (options.onProgress) options.onProgress(percentage, bytesUploaded, bytesTotal);
           },
           onSuccess: function() {
-            console.log('Upload completed successfully');
+            console.log('TUS upload completed');
             resolve({ fileId, storagePath, fileName: file.name, size: file.size, type: file.type });
           },
         });
 
-        // Store reference for cancellation
         currentUploadTus = upload;
         uploadStartTime = Date.now();
         uploadedBytes = 0;
-
-        // Start upload
         upload.start();
       });
+    }
+
+    // ==================== FALLBACK UPLOAD USING XMLHttpRequest (WITH PROGRESS) ====================
+    function uploadFileFallback(file, fileId, storagePath) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        currentXhr = xhr;
+
+        xhr.upload.addEventListener('progress', (e) => {
+          if (e.lengthComputable) {
+            const percentage = ((e.loaded / e.total) * 100).toFixed(1);
+            uploadedBytes = e.loaded;
+            currentFileSize = e.total;
+            const elapsed = (Date.now() - uploadStartTime) / 1000;
+            const speed = e.loaded / elapsed;
+            const remaining = e.total - e.loaded;
+            const eta = speed > 0 ? remaining / speed : 0;
+
+            progressBar.style.width = percentage + '%';
+            progressPercentage.textContent = percentage + '%';
+            uploadSpeed.textContent = formatBytes(speed) + '/s';
+            uploadEta.textContent = eta > 0 ? Math.ceil(eta) + 's remaining' : '';
+          }
+        });
+
+        xhr.addEventListener('load', () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve({ fileId, storagePath, fileName: file.name, size: file.size, type: file.type });
+          } else {
+            reject(new Error(`Upload failed with status ${xhr.status}`));
+          }
+        });
+
+        xhr.addEventListener('error', () => reject(new Error('Network error during upload')));
+        xhr.addEventListener('abort', () => reject(new Error('Upload aborted')));
+
+        const url = `${SUPABASE_URL}/storage/v1/object/${STORAGE_BUCKET}/${storagePath}`;
+        xhr.open('PUT', url, true);
+        xhr.setRequestHeader('Authorization', `Bearer ${SUPABASE_ANON_KEY}`);
+        xhr.setRequestHeader('apikey', SUPABASE_ANON_KEY);
+        xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+        xhr.setRequestHeader('x-upsert', 'true');
+        uploadStartTime = Date.now();
+        xhr.send(file);
+      });
+    }
+
+    // ==================== MAIN UPLOAD WRAPPER (TUS + FALLBACK) ====================
+    async function uploadFile(file, options = {}) {
+      const fileId = crypto.randomUUID();
+      const safeName = fileId + '-' + file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const storagePath = safeName;
+
+      try {
+        // Try TUS first
+        return await uploadFileWithTUS(file, { ...options, fileId, storagePath });
+      } catch (tusError) {
+        console.warn('TUS upload failed, falling back to direct upload:', tusError);
+        // Fallback to direct XMLHttpRequest
+        cancelCurrentUpload(); // clear any TUS remnants
+        showToast('Using alternative upload method...', 'info');
+        return await uploadFileFallback(file, fileId, storagePath);
+      }
     }
 
     function cancelCurrentUpload() {
       if (currentUploadTus) {
         currentUploadTus.abort(true);
         currentUploadTus = null;
-        progressContainer.classList.add('hidden');
-        showToast('Upload cancelled', 'info');
       }
+      if (currentXhr) {
+        currentXhr.abort();
+        currentXhr = null;
+      }
+      progressContainer.classList.add('hidden');
+      showToast('Upload cancelled', 'info');
     }
 
     // ==================== DATABASE INSERT ====================
@@ -577,7 +661,6 @@
         // Password check
         if (fileRecord.password_hash) {
           if (!passwordAttempt) {
-            // Prompt for password
             const pwd = prompt('This file is password protected. Enter password:');
             if (!pwd) return;
             const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pwd));
@@ -587,11 +670,9 @@
               showToast('Incorrect password', 'error');
               return;
             }
-            // Recursively call with password validated
             triggerDownload(fileId, pwd);
             return;
           } else {
-            // Already prompted, but re-check hash in case of external call
             const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(passwordAttempt));
             const hashArray = Array.from(new Uint8Array(hashBuffer));
             const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
@@ -602,7 +683,7 @@
           }
         }
 
-        // Get public URL for file
+        // Get public URL
         const { data: urlData } = supabase
           .storage
           .from(STORAGE_BUCKET)
@@ -617,7 +698,7 @@
           .eq('id', fileId)
           .then(({ error }) => { if (error) console.warn('Download count update failed', error); });
 
-        // Trigger download via iframe or anchor
+        // Trigger download
         const a = document.createElement('a');
         a.href = publicUrl;
         a.download = fileRecord.file_name;
@@ -625,8 +706,6 @@
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        // Alternative: use iframe
-        // downloadIframe.src = publicUrl;
 
         showToast('Download started', 'success');
       } catch (err) {
@@ -638,13 +717,19 @@
     // ==================== UPLOAD FLOW ====================
     async function handleFiles(files, password = null, expiration = null) {
       if (!files || files.length === 0) return;
+      // Block if credentials are placeholder
+      if (isPlaceholder(SUPABASE_URL, SUPABASE_ANON_KEY)) {
+        showToast('Please set your Supabase credentials in the code first.', 'error');
+        return;
+      }
+
       uploadQueue.classList.remove('hidden');
       queueList.innerHTML = '';
       progressContainer.classList.remove('hidden');
       cancelUploadBtn.classList.remove('hidden');
 
       for (const file of files) {
-        if (file.size > 5 * 1024 * 1024 * 1024) { // 5 GB limit
+        if (file.size > 5 * 1024 * 1024 * 1024) {
           showToast(`${file.name} exceeds 5GB limit`, 'error');
           continue;
         }
@@ -681,7 +766,7 @@
           }
         } catch (err) {
           console.error(err);
-          showToast(`Upload failed for ${file.name}`, 'error');
+          showToast(`Upload failed for ${file.name}: ${err.message}`, 'error');
         }
       }
 
@@ -689,6 +774,7 @@
       progressContainer.classList.add('hidden');
       cancelUploadBtn.classList.add('hidden');
       currentUploadTus = null;
+      currentXhr = null;
       refreshFileList();
       updateStats();
       if (queueList.children.length === 0) {
@@ -775,10 +861,8 @@
 
     async function deleteFile(fileId, storagePath) {
       try {
-        // Delete from storage
         const { error: storageError } = await supabase.storage.from(STORAGE_BUCKET).remove([storagePath]);
         if (storageError) console.warn('Storage delete error:', storageError);
-        // Delete from database
         const { error: dbError } = await supabase.from(DB_TABLE).delete().eq('id', fileId);
         if (dbError) console.warn('DB delete error:', dbError);
         showToast('File deleted', 'success');
@@ -820,863 +904,7 @@
     fileInput.addEventListener('change', (e) => {
       if (e.target.files.length > 0) {
         handleFiles(Array.from(e.target.files));
-        fileInput.value = ''; // reset
-      }
-    });
-
-    // Cancel upload
-    cancelUploadBtn.addEventListener('click', cancelCurrentUpload);
-
-    // Copy link
-    copyLinkBtn.addEventListener('click', () => {
-      if (downloadLinkInput.value) copyToClipboard(downloadLinkInput.value);
-    });
-
-    // Open link
-    openLinkBtn.addEventListener('click', () => {
-      if (currentFileId) triggerDownload(currentFileId);
-    });
-
-    // Download now button
-    downloadNowBtn.addEventListener('click', () => {
-      if (currentFileId) triggerDownload(currentFileId);
-    });
-
-    // Refresh list & search
-    refreshListBtn.addEventListener('click', refreshFileList);
-    searchInput.addEventListener('input', () => {
-      refreshFileList();
-    });
-
-    // Window load: check for download param
-    window.addEventListener('load', () => {
-      const urlParams = new URLSearchParams(window.location.search);
-      const downloadId = urlParams.get('download');
-      if (downloadId) {
-        // Delay a bit to ensure everything is loaded
-        setTimeout(() => triggerDownload(downloadId), 500);<!-- 
-  PREMIUM FILE HOSTING + DIRECT DOWNLOAD LINK GENERATOR
-  Single-file HTML + CSS + JS (Tailwind, TUS, QRCode.js, GSAP)
-  Backend: Supabase (Storage + Database)
-  Permanent links, no expiry, real downloads.
--->
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
-  <title>NeonCloud – Premium File Hosting</title>
-  <!-- Tailwind CSS CDN -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Custom Tailwind config for neon theme -->
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            neon: {
-              purple: '#a855f7',
-              blue: '#3b82f6',
-              cyan: '#06b6d4',
-              dark: '#0b0c10',
-              glass: 'rgba(15,23,42,0.7)',
-            }
-          },
-          backdropBlur: {
-            xs: '2px',
-          }
-        }
-      }
-    }
-  </script>
-  <!-- GSAP for animations -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
-  <!-- QRCode.js -->
-  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
-  <!-- TUS client for resumable uploads with progress -->
-  <script src="https://cdn.jsdelivr.net/npm/tus-js-client@4.1.0/dist/tus.min.js"></script>
-  <!-- Supabase JS SDK -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <style>
-    /* ========== CUSTOM NEON GLASSMORPHISM ========== */
-    body {
-      background: #0b0c10;
-      font-family: 'Inter', system-ui, -apple-system, sans-serif;
-      overflow-x: hidden;
-      position: relative;
-    }
-    /* Animated gradient background */
-    .bg-animated {
-      background: linear-gradient(135deg, #0b0c10 0%, #1a0533 50%, #0b0c10 100%);
-      background-size: 400% 400%;
-      animation: gradientShift 15s ease infinite;
-    }
-    @keyframes gradientShift {
-      0% { background-position: 0% 50%; }
-      50% { background-position: 100% 50%; }
-      100% { background-position: 0% 50%; }
-    }
-    /* Floating particles canvas */
-    #particles-canvas {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      z-index: 0;
-      pointer-events: none;
-    }
-    .glass-card {
-      background: rgba(15, 23, 42, 0.65);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      border: 1px solid rgba(168, 85, 247, 0.15);
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 15px rgba(168, 85, 247, 0.3);
-      transition: all 0.3s ease;
-    }
-    .glass-card:hover {
-      border-color: rgba(6, 182, 212, 0.5);
-      box-shadow: 0 8px 32px rgba(0,0,0,0.6), 0 0 25px rgba(6,182,212,0.4);
-    }
-    .neon-text {
-      text-shadow: 0 0 10px currentColor;
-    }
-    .neon-border {
-      border: 1px solid rgba(168,85,247,0.6);
-      box-shadow: 0 0 12px rgba(168,85,247,0.3);
-    }
-    .neon-glow {
-      animation: pulseGlow 2s infinite;
-    }
-    @keyframes pulseGlow {
-      0% { box-shadow: 0 0 5px rgba(168,85,247,0.4); }
-      50% { box-shadow: 0 0 20px rgba(168,85,247,0.8); }
-      100% { box-shadow: 0 0 5px rgba(168,85,247,0.4); }
-    }
-    .upload-area {
-      border: 2px dashed rgba(168,85,247,0.5);
-      transition: all 0.3s ease;
-      cursor: pointer;
-    }
-    .upload-area:hover, .upload-area.dragover {
-      border-color: #06b6d4;
-      background: rgba(6,182,212,0.08);
-      box-shadow: 0 0 25px rgba(6,182,212,0.4);
-    }
-    .progress-bar {
-      background: linear-gradient(90deg, #a855f7, #3b82f6, #06b6d4);
-      background-size: 200% 100%;
-      animation: progressShine 2s linear infinite;
-      transition: width 0.3s ease;
-    }
-    @keyframes progressShine {
-      0% { background-position: 0% 0%; }
-      100% { background-position: 200% 0%; }
-    }
-    .btn-primary {
-      background: linear-gradient(135deg, #a855f7, #3b82f6);
-      border: none;
-      transition: all 0.3s ease;
-      box-shadow: 0 0 15px rgba(168,85,247,0.5);
-    }
-    .btn-primary:hover {
-      box-shadow: 0 0 25px rgba(168,85,247,0.8);
-      transform: translateY(-2px);
-    }
-    .file-row {
-      transition: all 0.2s ease;
-    }
-    .file-row:hover {
-      background: rgba(168,85,247,0.08);
-    }
-    /* Toast */
-    .toast {
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      z-index: 9999;
-      animation: slideUp 0.3s ease;
-    }
-    @keyframes slideUp {
-      from { transform: translateY(100px); opacity: 0; }
-      to { transform: translateY(0); opacity: 1; }
-    }
-  </style>
-</head>
-<body class="bg-animated text-white min-h-screen relative z-10">
-
-  <!-- Floating Particles Canvas -->
-  <canvas id="particles-canvas"></canvas>
-
-  <!-- Main container -->
-  <div class="relative z-20 container mx-auto px-4 py-8 max-w-6xl">
-
-    <!-- HERO SECTION -->
-    <div class="text-center mb-16 pt-12">
-      <h1 class="text-5xl md:text-7xl font-extrabold tracking-tight">
-        <span class="text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-cyan-400 to-blue-500 neon-text">
-          NeonCloud
-        </span>
-      </h1>
-      <p class="mt-4 text-xl md:text-2xl text-gray-300 max-w-2xl mx-auto">
-        Upload any file. Get instant permanent download links.
-      </p>
-    </div>
-
-    <!-- UPLOAD SECTION (Drag & Drop) -->
-    <div class="glass-card p-8 mb-12 rounded-3xl">
-      <div id="drop-zone" class="upload-area rounded-2xl p-10 text-center transition-all">
-        <div class="flex flex-col items-center justify-center space-y-4">
-          <svg class="w-16 h-16 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-          </svg>
-          <p class="text-xl text-gray-200 font-semibold">Drag & drop files here</p>
-          <p class="text-sm text-gray-400">or click to browse. Max file size: 5 GB</p>
-          <input type="file" id="file-input" class="hidden" multiple>
-          <button id="browse-btn" class="btn-primary px-8 py-3 rounded-full text-white font-semibold text-lg mt-2">
-            Choose Files
-          </button>
-        </div>
-      </div>
-
-      <!-- File list for upload queue -->
-      <div id="upload-queue" class="mt-8 space-y-4 hidden">
-        <h3 class="text-lg font-semibold text-cyan-400">Upload Queue</h3>
-        <div id="queue-list" class="space-y-3"></div>
-      </div>
-
-      <!-- Upload progress global (for active upload) -->
-      <div id="upload-progress-container" class="mt-6 hidden">
-        <div class="flex justify-between text-sm text-gray-300 mb-1">
-          <span id="progress-filename"></span>
-          <span id="progress-percentage">0%</span>
-        </div>
-        <div class="w-full bg-gray-800 rounded-full h-3">
-          <div id="progress-bar" class="progress-bar h-3 rounded-full" style="width: 0%"></div>
-        </div>
-        <div class="flex justify-between text-xs text-gray-500 mt-1">
-          <span id="upload-speed"></span>
-          <span id="upload-eta"></span>
-        </div>
-        <button id="cancel-upload" class="mt-2 text-red-400 text-sm hover:underline">Cancel</button>
-      </div>
-    </div>
-
-    <!-- GENERATED LINK SECTION (hidden until upload succeeds) -->
-    <div id="result-section" class="glass-card p-8 mb-12 rounded-3xl hidden">
-      <h2 class="text-2xl font-bold text-cyan-400 mb-4">✅ Upload Successful!</h2>
-      <div class="flex flex-col md:flex-row gap-6">
-        <div class="flex-1 space-y-4">
-          <div>
-            <label class="text-sm text-gray-400">Download Link:</label>
-            <div class="flex items-center mt-1">
-              <input id="download-link-input" type="text" readonly class="w-full bg-gray-900 border border-gray-700 rounded-l-lg px-4 py-2 text-gray-200 focus:outline-none">
-              <button id="copy-link-btn" class="btn-primary px-4 py-2 rounded-r-lg text-white font-semibold">Copy</button>
-            </div>
-          </div>
-          <div class="flex gap-3">
-            <button id="open-link-btn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg text-white">Open</button>
-            <button id="download-now-btn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg text-white">Download</button>
-          </div>
-          <!-- Extra options: password & expiration shown on upload setup -->
-          <div class="mt-4 text-sm text-gray-400">
-            <p>Link never expires • Unlimited downloads</p>
-          </div>
-        </div>
-        <!-- QR Code -->
-        <div class="flex-shrink-0">
-          <div id="qrcode-container" class="bg-white p-3 rounded-xl inline-block"></div>
-          <p class="text-xs text-gray-500 mt-2 text-center">Scan to download</p>
-        </div>
-      </div>
-    </div>
-
-    <!-- FILE MANAGER SECTION -->
-    <div class="glass-card p-8 mb-12 rounded-3xl">
-      <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
-        <h2 class="text-2xl font-bold text-purple-400">Your Files</h2>
-        <div class="flex gap-3 mt-3 md:mt-0">
-          <input type="text" id="search-input" placeholder="Search files..." class="bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-gray-200 w-full md:w-64 focus:outline-none focus:border-cyan-400">
-          <button id="refresh-list-btn" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg text-white">Refresh</button>
-        </div>
-      </div>
-      <div id="files-list" class="space-y-2 max-h-96 overflow-y-auto">
-        <!-- dynamically filled -->
-        <div class="text-center text-gray-500 py-8">Loading files...</div>
-      </div>
-    </div>
-
-    <!-- STATS SECTION -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
-      <div class="glass-card p-6 rounded-2xl text-center">
-        <p class="text-3xl font-bold text-cyan-400" id="stat-uploads">0</p>
-        <p class="text-gray-400 mt-1">Total Uploads</p>
-      </div>
-      <div class="glass-card p-6 rounded-2xl text-center">
-        <p class="text-3xl font-bold text-purple-400" id="stat-downloads">0</p>
-        <p class="text-gray-400 mt-1">Total Downloads</p>
-      </div>
-      <div class="glass-card p-6 rounded-2xl text-center">
-        <p class="text-3xl font-bold text-blue-400" id="stat-storage">0 MB</p>
-        <p class="text-gray-400 mt-1">Storage Used</p>
-      </div>
-    </div>
-
-    <!-- FOOTER -->
-    <div class="text-center text-gray-500 text-sm pb-8">
-      NeonCloud – Permanent File Hosting. Powered by Supabase.
-    </div>
-  </div>
-
-  <!-- Toast container -->
-  <div id="toast-container" class="toast"></div>
-
-  <!-- Hidden download iframe for triggering downloads -->
-  <iframe id="download-iframe" class="hidden"></iframe>
-
-  <script>
-    // ==================== SUPABASE CONFIGURATION ====================
-    // ⚠️ REPLACE with your own Supabase project credentials
-    const SUPABASE_URL = 'https://your-project-id.supabase.co';
-    const SUPABASE_ANON_KEY = 'your-anon-key';
-    
-    // Initialize Supabase client
-    let supabase;
-    try {
-      supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    } catch (e) {
-      console.error('Supabase init error', e);
-      alert('Please configure your Supabase credentials in the code.');
-    }
-
-    // Storage bucket name (must exist and be public)
-    const STORAGE_BUCKET = 'files';
-    // Database table name (metadata)
-    const DB_TABLE = 'file_metadata';
-
-    // ==================== DOM ELEMENTS ====================
-    const dropZone = document.getElementById('drop-zone');
-    const fileInput = document.getElementById('file-input');
-    const browseBtn = document.getElementById('browse-btn');
-    const uploadQueue = document.getElementById('upload-queue');
-    const queueList = document.getElementById('queue-list');
-    const progressContainer = document.getElementById('upload-progress-container');
-    const progressBar = document.getElementById('progress-bar');
-    const progressFilename = document.getElementById('progress-filename');
-    const progressPercentage = document.getElementById('progress-percentage');
-    const uploadSpeed = document.getElementById('upload-speed');
-    const uploadEta = document.getElementById('upload-eta');
-    const cancelUploadBtn = document.getElementById('cancel-upload');
-    const resultSection = document.getElementById('result-section');
-    const downloadLinkInput = document.getElementById('download-link-input');
-    const copyLinkBtn = document.getElementById('copy-link-btn');
-    const openLinkBtn = document.getElementById('open-link-btn');
-    const downloadNowBtn = document.getElementById('download-now-btn');
-    const qrcodeContainer = document.getElementById('qrcode-container');
-    const searchInput = document.getElementById('search-input');
-    const refreshListBtn = document.getElementById('refresh-list-btn');
-    const filesListDiv = document.getElementById('files-list');
-    const statUploads = document.getElementById('stat-uploads');
-    const statDownloads = document.getElementById('stat-downloads');
-    const statStorage = document.getElementById('stat-storage');
-    const toastContainer = document.getElementById('toast-container');
-    const downloadIframe = document.getElementById('download-iframe');
-
-    // ==================== GLOBAL STATE ====================
-    let currentUploadTus = null; // TUS upload instance
-    let currentFileId = null;    // ID of last uploaded file
-    let uploadStartTime = null;
-    let uploadedBytes = 0;
-    let currentFileSize = 0;
-
-    // ==================== PARTICLES BACKGROUND ====================
-    function initParticles() {
-      const canvas = document.getElementById('particles-canvas');
-      const ctx = canvas.getContext('2d');
-      let width, height;
-      let particles = [];
-      const particleCount = 80;
-
-      function resize() {
-        width = window.innerWidth;
-        height = window.innerHeight;
-        canvas.width = width;
-        canvas.height = height;
-      }
-      window.addEventListener('resize', resize);
-      resize();
-
-      class Particle {
-        constructor() {
-          this.reset();
-        }
-        reset() {
-          this.x = Math.random() * width;
-          this.y = Math.random() * height;
-          this.vx = (Math.random() - 0.5) * 0.4;
-          this.vy = (Math.random() - 0.5) * 0.4;
-          this.size = Math.random() * 2.5 + 0.5;
-          this.opacity = Math.random() * 0.6 + 0.2;
-          this.color = Math.random() > 0.5 ? '147, 51, 234' : '6, 182, 212'; // purple or cyan
-        }
-        update() {
-          this.x += this.vx;
-          this.y += this.vy;
-          if (this.x < 0 || this.x > width) this.vx *= -1;
-          if (this.y < 0 || this.y > height) this.vy *= -1;
-        }
-        draw() {
-          ctx.beginPath();
-          ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-          ctx.fillStyle = `rgba(${this.color}, ${this.opacity})`;
-          ctx.fill();
-        }
-      }
-
-      for (let i = 0; i < particleCount; i++) {
-        particles.push(new Particle());
-      }
-
-      function animate() {
-        ctx.clearRect(0, 0, width, height);
-        particles.forEach(p => {
-          p.update();
-          p.draw();
-        });
-        // draw connection lines
-        for (let i = 0; i < particles.length; i++) {
-          for (let j = i + 1; j < particles.length; j++) {
-            const dx = particles[i].x - particles[j].x;
-            const dy = particles[i].y - particles[j].y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < 120) {
-              ctx.beginPath();
-              ctx.moveTo(particles[i].x, particles[i].y);
-              ctx.lineTo(particles[j].x, particles[j].y);
-              ctx.strokeStyle = `rgba(168, 85, 247, ${0.1 * (1 - dist / 120)})`;
-              ctx.stroke();
-            }
-          }
-        }
-        requestAnimationFrame(animate);
-      }
-      animate();
-    }
-
-    // ==================== TOAST NOTIFICATIONS ====================
-    function showToast(message, type = 'info') {
-      const toast = document.createElement('div');
-      const bg = type === 'error' ? 'bg-red-600' : type === 'success' ? 'bg-green-600' : 'bg-gray-800';
-      toast.className = `${bg} text-white px-5 py-3 rounded-xl shadow-2xl mb-3 flex items-center gap-3`;
-      toast.innerHTML = `<span>${message}</span><button class="ml-auto text-white font-bold" onclick="this.parentElement.remove()">✕</button>`;
-      toastContainer.appendChild(toast);
-      setTimeout(() => {
-        if (toast.parentElement) toast.remove();
-      }, 4000);
-    }
-
-    // ==================== COPY TO CLIPBOARD ====================
-    function copyToClipboard(text) {
-      navigator.clipboard.writeText(text).then(() => {
-        showToast('Link copied!', 'success');
-      }).catch(() => {
-        showToast('Failed to copy', 'error');
-      });
-    }
-
-    // ==================== FORMAT BYTES ====================
-    function formatBytes(bytes, decimals = 2) {
-      if (bytes === 0) return '0 Bytes';
-      const k = 1024;
-      const dm = decimals < 0 ? 0 : decimals;
-      const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-      const i = Math.floor(Math.log(bytes) / Math.log(k));
-      return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
-    }
-
-    // ==================== FILE UPLOAD USING TUS (RESUMABLE) ====================
-    async function uploadFile(file, options = {}) {
-      return new Promise((resolve, reject) => {
-        const fileId = crypto.randomUUID();
-        const safeName = fileId + '-' + file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-        const storagePath = safeName; // file stored with unique prefix
-
-        // Build TUS upload
-        const upload = new tus.Upload(file, {
-          endpoint: `${SUPABASE_URL}/storage/v1/upload/resumable`,
-          retryDelays: [0, 3000, 5000, 10000, 20000],
-          headers: {
-            authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-            'x-upsert': 'true',
-          },
-          metadata: {
-            bucketName: STORAGE_BUCKET,
-            objectName: storagePath,
-            contentType: file.type || 'application/octet-stream',
-            cacheControl: 'public, max-age=31536000, immutable',
-          },
-          uploadSize: file.size,
-          chunkSize: 5 * 1024 * 1024, // 5MB chunks
-          onError: function(error) {
-            console.error('Upload failed:', error);
-            reject(error);
-          },
-          onProgress: function(bytesUploaded, bytesTotal) {
-            const percentage = ((bytesUploaded / bytesTotal) * 100).toFixed(1);
-            uploadedBytes = bytesUploaded;
-            currentFileSize = bytesTotal;
-            const elapsed = (Date.now() - uploadStartTime) / 1000;
-            const speed = bytesUploaded / elapsed; // bytes per second
-            const remaining = bytesTotal - bytesUploaded;
-            const eta = speed > 0 ? remaining / speed : 0;
-
-            progressBar.style.width = percentage + '%';
-            progressPercentage.textContent = percentage + '%';
-            uploadSpeed.textContent = formatBytes(speed) + '/s';
-            uploadEta.textContent = eta > 0 ? Math.ceil(eta) + 's remaining' : '';
-
-            if (options.onProgress) options.onProgress(percentage, bytesUploaded, bytesTotal);
-          },
-          onSuccess: function() {
-            console.log('Upload completed successfully');
-            resolve({ fileId, storagePath, fileName: file.name, size: file.size, type: file.type });
-          },
-        });
-
-        // Store reference for cancellation
-        currentUploadTus = upload;
-        uploadStartTime = Date.now();
-        uploadedBytes = 0;
-
-        // Start upload
-        upload.start();
-      });
-    }
-
-    function cancelCurrentUpload() {
-      if (currentUploadTus) {
-        currentUploadTus.abort(true);
-        currentUploadTus = null;
-        progressContainer.classList.add('hidden');
-        showToast('Upload cancelled', 'info');
-      }
-    }
-
-    // ==================== DATABASE INSERT ====================
-    async function saveFileMetadata(metadata) {
-      const { fileId, storagePath, fileName, size, type, password, expiration } = metadata;
-      const record = {
-        id: fileId,
-        file_name: fileName,
-        file_size: size,
-        mime_type: type,
-        storage_path: storagePath,
-        upload_time: new Date().toISOString(),
-        download_count: 0,
-        password_hash: password || null,
-        expiration: expiration || null,
-      };
-      const { data, error } = await supabase.from(DB_TABLE).insert([record]).select();
-      if (error) throw error;
-      return data[0];
-    }
-
-    // ==================== GENERATE DOWNLOAD LINK ====================
-    function generateDownloadLink(fileId) {
-      const base = window.location.href.split('?')[0];
-      return `${base}?download=${fileId}`;
-    }
-
-    // ==================== QR CODE GENERATION ====================
-    function generateQRCode(text) {
-      qrcodeContainer.innerHTML = '';
-      new QRCode(qrcodeContainer, {
-        text: text,
-        width: 140,
-        height: 140,
-        colorDark: '#0b0c10',
-        colorLight: '#ffffff',
-        correctLevel: QRCode.CorrectLevel.H
-      });
-    }
-
-    // ==================== SHOW RESULT ====================
-    function showResult(fileId) {
-      const link = generateDownloadLink(fileId);
-      downloadLinkInput.value = link;
-      generateQRCode(link);
-      resultSection.classList.remove('hidden');
-      currentFileId = fileId;
-      // Scroll to result
-      resultSection.scrollIntoView({ behavior: 'smooth' });
-    }
-
-    // ==================== PASSWORD PROMPT & DOWNLOAD ====================
-    async function triggerDownload(fileId, passwordAttempt = null) {
-      try {
-        const { data: fileRecord, error } = await supabase
-          .from(DB_TABLE)
-          .select('*')
-          .eq('id', fileId)
-          .single();
-        if (error || !fileRecord) {
-          showToast('File not found', 'error');
-          return;
-        }
-
-        // Check expiration
-        if (fileRecord.expiration && new Date(fileRecord.expiration) < new Date()) {
-          showToast('This download link has expired.', 'error');
-          return;
-        }
-
-        // Password check
-        if (fileRecord.password_hash) {
-          if (!passwordAttempt) {
-            // Prompt for password
-            const pwd = prompt('This file is password protected. Enter password:');
-            if (!pwd) return;
-            const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pwd));
-            const hashArray = Array.from(new Uint8Array(hashBuffer));
-            const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-            if (hashHex !== fileRecord.password_hash) {
-              showToast('Incorrect password', 'error');
-              return;
-            }
-            // Recursively call with password validated
-            triggerDownload(fileId, pwd);
-            return;
-          } else {
-            // Already prompted, but re-check hash in case of external call
-            const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(passwordAttempt));
-            const hashArray = Array.from(new Uint8Array(hashBuffer));
-            const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-            if (hashHex !== fileRecord.password_hash) {
-              showToast('Password mismatch', 'error');
-              return;
-            }
-          }
-        }
-
-        // Get public URL for file
-        const { data: urlData } = supabase
-          .storage
-          .from(STORAGE_BUCKET)
-          .getPublicUrl(fileRecord.storage_path);
-        const publicUrl = urlData?.publicUrl;
-        if (!publicUrl) throw new Error('Could not retrieve public URL');
-
-        // Increment download counter (fire and forget)
-        supabase
-          .from(DB_TABLE)
-          .update({ download_count: (fileRecord.download_count || 0) + 1 })
-          .eq('id', fileId)
-          .then(({ error }) => { if (error) console.warn('Download count update failed', error); });
-
-        // Trigger download via iframe or anchor
-        const a = document.createElement('a');
-        a.href = publicUrl;
-        a.download = fileRecord.file_name;
-        a.style.display = 'none';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        // Alternative: use iframe
-        // downloadIframe.src = publicUrl;
-
-        showToast('Download started', 'success');
-      } catch (err) {
-        console.error(err);
-        showToast('Download failed', 'error');
-      }
-    }
-
-    // ==================== UPLOAD FLOW ====================
-    async function handleFiles(files, password = null, expiration = null) {
-      if (!files || files.length === 0) return;
-      uploadQueue.classList.remove('hidden');
-      queueList.innerHTML = '';
-      progressContainer.classList.remove('hidden');
-      cancelUploadBtn.classList.remove('hidden');
-
-      for (const file of files) {
-        if (file.size > 5 * 1024 * 1024 * 1024) { // 5 GB limit
-          showToast(`${file.name} exceeds 5GB limit`, 'error');
-          continue;
-        }
-        const fileItem = document.createElement('div');
-        fileItem.className = 'flex items-center justify-between bg-gray-800 p-3 rounded-lg';
-        fileItem.innerHTML = `<span class="truncate">${file.name}</span><span class="text-gray-400 text-sm">${formatBytes(file.size)}</span>`;
-        queueList.appendChild(fileItem);
-      }
-
-      for (const file of files) {
-        try {
-          progressFilename.textContent = file.name;
-          progressBar.style.width = '0%';
-          progressPercentage.textContent = '0%';
-          uploadSpeed.textContent = '';
-          uploadEta.textContent = '';
-
-          const result = await uploadFile(file);
-          const metadata = {
-            ...result,
-            password: password ? await hashPassword(password) : null,
-            expiration: expiration || null,
-          };
-          const dbRecord = await saveFileMetadata(metadata);
-          showResult(metadata.fileId);
-          showToast(`${file.name} uploaded successfully!`, 'success');
-          // Remove from queue visual
-          const items = queueList.children;
-          for (let i = 0; i < items.length; i++) {
-            if (items[i].textContent.includes(file.name)) {
-              items[i].remove();
-              break;
-            }
-          }
-        } catch (err) {
-          console.error(err);
-          showToast(`Upload failed for ${file.name}`, 'error');
-        }
-      }
-
-      // Hide progress after all done
-      progressContainer.classList.add('hidden');
-      cancelUploadBtn.classList.add('hidden');
-      currentUploadTus = null;
-      refreshFileList();
-      updateStats();
-      if (queueList.children.length === 0) {
-        uploadQueue.classList.add('hidden');
-      }
-    }
-
-    async function hashPassword(password) {
-      const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(password));
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-    }
-
-    // ==================== FILE MANAGER (list, search, delete) ====================
-    async function fetchFiles(search = '') {
-      let query = supabase
-        .from(DB_TABLE)
-        .select('*')
-        .order('upload_time', { ascending: false });
-      if (search) {
-        query = query.ilike('file_name', `%${search}%`);
-      }
-      const { data, error } = await query;
-      if (error) {
-        console.error(error);
-        return [];
-      }
-      return data || [];
-    }
-
-    async function refreshFileList() {
-      filesListDiv.innerHTML = '<div class="text-center text-gray-500 py-4">Loading...</div>';
-      const searchTerm = searchInput.value.trim();
-      const files = await fetchFiles(searchTerm);
-      if (files.length === 0) {
-        filesListDiv.innerHTML = '<div class="text-center text-gray-500 py-8">No files uploaded yet.</div>';
-        return;
-      }
-      filesListDiv.innerHTML = '';
-      files.forEach(file => {
-        const row = document.createElement('div');
-        row.className = 'file-row flex flex-col md:flex-row items-start md:items-center justify-between bg-gray-800/50 p-4 rounded-xl';
-        row.innerHTML = `
-          <div class="flex items-center gap-3 w-full md:w-auto">
-            <div class="text-2xl">📄</div>
-            <div class="flex-1 min-w-0">
-              <p class="font-medium truncate">${file.file_name}</p>
-              <p class="text-xs text-gray-400">${formatBytes(file.file_size)} • ${new Date(file.upload_time).toLocaleString()}</p>
-            </div>
-          </div>
-          <div class="flex items-center gap-2 mt-3 md:mt-0">
-            <span class="text-sm bg-gray-700 px-2 py-1 rounded-full">⬇️ ${file.download_count || 0}</span>
-            <button class="copy-row-btn bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded-lg text-sm" data-link="${generateDownloadLink(file.id)}">Copy</button>
-            <button class="download-row-btn bg-cyan-700 hover:bg-cyan-600 px-3 py-1 rounded-lg text-sm" data-id="${file.id}">DL</button>
-            <button class="delete-row-btn bg-red-800 hover:bg-red-700 px-3 py-1 rounded-lg text-sm" data-id="${file.id}" data-path="${file.storage_path}">🗑️</button>
-          </div>
-        `;
-        filesListDiv.appendChild(row);
-      });
-
-      // Attach event listeners
-      document.querySelectorAll('.copy-row-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          copyToClipboard(e.target.dataset.link);
-        });
-      });
-      document.querySelectorAll('.download-row-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          triggerDownload(e.target.dataset.id);
-        });
-      });
-      document.querySelectorAll('.delete-row-btn').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
-          const fileId = e.target.dataset.id;
-          const storagePath = e.target.dataset.path;
-          if (confirm('Delete this file permanently?')) {
-            await deleteFile(fileId, storagePath);
-            refreshFileList();
-            updateStats();
-          }
-        });
-      });
-    }
-
-    async function deleteFile(fileId, storagePath) {
-      try {
-        // Delete from storage
-        const { error: storageError } = await supabase.storage.from(STORAGE_BUCKET).remove([storagePath]);
-        if (storageError) console.warn('Storage delete error:', storageError);
-        // Delete from database
-        const { error: dbError } = await supabase.from(DB_TABLE).delete().eq('id', fileId);
-        if (dbError) console.warn('DB delete error:', dbError);
-        showToast('File deleted', 'success');
-      } catch (err) {
-        console.error(err);
-        showToast('Delete failed', 'error');
-      }
-    }
-
-    // ==================== STATS ====================
-    async function updateStats() {
-      const files = await fetchFiles();
-      const totalUploads = files.length;
-      const totalDownloads = files.reduce((sum, f) => sum + (f.download_count || 0), 0);
-      const totalStorage = files.reduce((sum, f) => sum + (f.file_size || 0), 0);
-      statUploads.textContent = totalUploads;
-      statDownloads.textContent = totalDownloads;
-      statStorage.textContent = formatBytes(totalStorage);
-    }
-
-    // ==================== EVENT LISTENERS ====================
-    // Drag and drop
-    dropZone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      dropZone.classList.add('dragover');
-    });
-    dropZone.addEventListener('dragleave', () => {
-      dropZone.classList.remove('dragover');
-    });
-    dropZone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dropZone.classList.remove('dragover');
-      const files = Array.from(e.dataTransfer.files);
-      if (files.length > 0) handleFiles(files);
-    });
-
-    // Browse button
-    browseBtn.addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', (e) => {
-      if (e.target.files.length > 0) {
-        handleFiles(Array.from(e.target.files));
-        fileInput.value = ''; // reset
+        fileInput.value = '';
       }
     });
 
@@ -1711,22 +939,6 @@
       if (downloadId) {
         // Delay a bit to ensure everything is loaded
         setTimeout(() => triggerDownload(downloadId), 500);
-      }
-      // Initial file list load
-      refreshFileList();
-      updateStats();
-    });
-
-    // Initialize particles
-    initParticles();
-
-    // GSAP animations for hero and sections
-    gsap.from('.glass-card', { duration: 1, y: 40, opacity: 0, stagger: 0.15, ease: 'power3.out' });
-  </script>
-
-</body>
-</html>
-        
       }
       // Initial file list load
       refreshFileList();
